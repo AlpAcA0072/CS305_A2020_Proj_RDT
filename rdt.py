@@ -80,7 +80,7 @@ class RDTSocket(UnreliableSocket):
         # send fsm初始状态,将所有值都重设为0
         self.set_zero()
         logging.info("ok")
-        conn._connect_addr = addr
+        self._connect_addr = addr
         return conn, addr
 
     """
@@ -174,7 +174,13 @@ class RDTSocket(UnreliableSocket):
         data = None
         recv, addr = super().recvfrom(2048)
         recv = RDTSegment.parse(recv)
-        data = recv.payload
+        print('recv_seq_num' + str(recv.seq_num))
+        print('self.recv_seq_num' + str(self.ack_num))
+        if recv.seq_num == self.ack_num:
+            data = recv.payload
+            send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
+            self.ack_num += 1
+            self.sendto(send_seg.encode(), self._connect_addr)
         with open('output.txt', 'a') as f:
             f.write(data.decode())
         print(data.decode())
@@ -187,16 +193,39 @@ class RDTSocket(UnreliableSocket):
         The socket must be connected to a remote socket, i.e. self._send_to must not be none.
         """
 
-        number_of_segments = math.ceil(len(bytes) / RDTSegment.MAX_PAYLOAD_LEN)
-        for i in range(number_of_segments):
-            index = i * RDTSegment.MAX_PAYLOAD_LEN
-            payload = bytes[index:index + RDTSegment.MAX_PAYLOAD_LEN]
-            rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=payload)
-            self.send_seq_num += len(rdt_seg.payload)
+        # number_of_segments = math.ceil(len(bytes) / 1000)
+        # for i in range(number_of_segments):
+        #     index = i * RDTSegment.MAX_PAYLOAD_LEN
+        #     payload = bytes[index:index + RDTSegment.MAX_PAYLOAD_LEN]
+        #     rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=payload)
+        #     self.send_seq_num += len(rdt_seg.payload)
+        #     self.sendto(rdt_seg.encode(), self._connect_addr)
+        #     print(payload.decode())
+        # print(number_of_segments)
+        # last_payload = bytes[number_of_segments * RDTSegment.SEGMENT_LEN + 1:len(bytes)]
+        # rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=last_payload)
+        # self.sendto(rdt_seg.encode(), self._connect_addr)
+        # print(last_payload.decode())
+        number_of_segments = math.ceil(len(bytes) / RDTSegment.SEGMENT_LEN)
+        while True:
+            for i in range(number_of_segments):
+                index = i * RDTSegment.MAX_PAYLOAD_LEN
+                payload = bytes[index:index + RDTSegment.MAX_PAYLOAD_LEN]
+                rdt_seg = RDTSegment(ack=True, seq_num=i, syn=False, ack_num=self.recv_seq_num,
+                                     payload=payload)
+                self.send_seq_num += 1
+                self.sendto(rdt_seg.encode(), self._connect_addr)
+                print('send_seq_num:' + str(rdt_seg.seq_num))
+                time.sleep(0.1)
+
+            last_payload = bytes[number_of_segments * RDTSegment.SEGMENT_LEN + 1:len(bytes)]
+            print(last_payload)
+            rdt_seg = RDTSegment(ack=True, seq_num=self.send_seq_num, syn=False, ack_num=self.recv_seq_num,
+                                 payload=last_payload)
+            self.send_seq_num += 1
+
             self.sendto(rdt_seg.encode(), self._connect_addr)
-        last_payload = bytes[number_of_segments * RDTSegment.SEGMENT_LEN + 1:len(bytes)]
-        rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=last_payload)
-        self.sendto(rdt_seg.encode(), self._connect_addr)
+            break
 
     def close(self):
         """
