@@ -1,5 +1,6 @@
 import math
 import random
+
 from USocket import UnreliableSocket
 import threading
 import time
@@ -44,6 +45,8 @@ class RDTSocket(UnreliableSocket):
         self._connect_addr = None
 
         self.syn = False
+        self.ack_list = []
+        self.ack_content = {}
 
     def accept(self) -> ('RDTSocket', (str, int)):
         """
@@ -139,20 +142,32 @@ class RDTSocket(UnreliableSocket):
         # print(len(rdt_seg.payload))
         # if type(rdt_seg.payload) is not 'NoneT':
         self.sendto(rdt_seg.encode(), address)
-
+        recv, addr = super().recvfrom(2048)
+        recv = RDTSegment.parse(recv)
+        if recv.ack_num == 0 and recv.ack and recv.syn and recv.seq_num == 0:
+            self.ack_num = 0
+            rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=b'')
+            self.sendto(rdt_seg.encode(), address)
         while True:
             # timer=threading.Timer(2.0,self.sendsyn,args=[address])
             #             # timer.start()
-            recv, addr = super().recvfrom(2048)
-            recv = RDTSegment.parse(recv)
+
+            t = threading.Thread(target=self.recv_ack)
+            # t.start()
+
             # timer.cancel()
-            if recv.ack_num == 0 and recv.ack and recv.syn and recv.seq_num == 0:
-                self.ack_num = 0
-                rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=b'')
-                self.sendto(rdt_seg.encode(), address)
-                break
+
+            break
         self.set_zero()
         logging.info("ok")
+
+    def recv_ack(self):
+        recv, addr = super().recvfrom(2048)
+        recv = RDTSegment.parse(recv)
+        if recv.ack_num == 0 and recv.ack and recv.syn and recv.seq_num == 0:
+            self.ack_num = 0
+            rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=b'')
+            self.sendto(rdt_seg.encode(), self._connect_addr)
 
     # def sendsyn(self,address:(str,int )):
     #     rdt_seg = RDTSegment(ack=False, seq_num=0, syn=True, ack_num=0, payload=b'')
@@ -171,7 +186,7 @@ class RDTSocket(UnreliableSocket):
         it MUST NOT affect the data returned by this function.
         """
 
-        data = None
+        data = b''
         recv, addr = super().recvfrom(2048)
         recv = RDTSegment.parse(recv)
         print('recv_seq_num' + str(recv.seq_num))
@@ -181,11 +196,27 @@ class RDTSocket(UnreliableSocket):
             send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
             self.ack_num += 1
             self.sendto(send_seg.encode(), self._connect_addr)
-        with open('output.txt', 'a') as f:
-            f.write(data.decode())
-        print(data.decode())
+            self.ack_content[str(recv.seq_num)] = recv.payload
+        elif recv.seq_num > self.ack_num:
+            data = recv.payload
+            send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
+            self.sendto(send_seg.encode(), self._connect_addr)
+
+        # with open('output.txt', 'a') as f:
+        #     f.write(data.decode())
+        # print("recv_seq_num: "+str(recv.seq_num))
+        if self.ack_num == 102:
+            with open('output.txt', 'a') as f:
+                for i in range(102):
+                    f.write(self.ack_content[i])
 
         return data
+
+    def receing(self):
+        while 1:
+            recv, addr = super().recvfrom(2048)
+            recv = RDTSegment.parse(recv)
+            self.ack_list.append(recv)
 
     def send(self, bytes: bytes):
         """
@@ -206,26 +237,74 @@ class RDTSocket(UnreliableSocket):
         # rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=last_payload)
         # self.sendto(rdt_seg.encode(), self._connect_addr)
         # print(last_payload.decode())
+
         number_of_segments = math.ceil(len(bytes) / RDTSegment.SEGMENT_LEN)
-        while True:
-            for i in range(number_of_segments):
+        window = []
+        for i in range(number_of_segments + 1):
+            if i != number_of_segments:
                 index = i * RDTSegment.MAX_PAYLOAD_LEN
                 payload = bytes[index:index + RDTSegment.MAX_PAYLOAD_LEN]
                 rdt_seg = RDTSegment(ack=True, seq_num=i, syn=False, ack_num=self.recv_seq_num,
                                      payload=payload)
-                self.send_seq_num += 1
-                self.sendto(rdt_seg.encode(), self._connect_addr)
-                print('send_seq_num:' + str(rdt_seg.seq_num))
-                time.sleep(0.1)
+                # self.send_seq_num += 1
+                # self.sendto(rdt_seg.encode(), self._connect_addr)
 
-            last_payload = bytes[number_of_segments * RDTSegment.SEGMENT_LEN + 1:len(bytes)]
-            print(last_payload)
-            rdt_seg = RDTSegment(ack=True, seq_num=self.send_seq_num, syn=False, ack_num=self.recv_seq_num,
-                                 payload=last_payload)
-            self.send_seq_num += 1
+                window.append([rdt_seg, time.time(), 0])
 
-            self.sendto(rdt_seg.encode(), self._connect_addr)
-            break
+                # recv, addr = super().recvfrom(2048)
+                # recv = RDTSegment.parse(recv)
+                # print('recv_seq_num' + str(recv.seq_num))
+                # print('self.recv_seq_num' + str(self.ack_num))
+                # if recv.ack and recv.ack_num == self.send_seq_num and recv.syn and recv.seq_num == self.ack_num:
+                #     self.ack_num += 1
+                #     continue
+
+                # time.sleep(0.1)
+            else:
+                last_payload = bytes[i * RDTSegment.MAX_PAYLOAD_LEN:]
+                rdt_seg = RDTSegment(ack=True, seq_num=self.send_seq_num, syn=False, ack_num=self.recv_seq_num,
+                                     payload=last_payload)
+                window.append([rdt_seg, time.time(), 0])
+
+        max_ack = -1
+        max_len = len(window)
+        threading.Thread(target=self.receing).start()
+        for l in range(20):
+            self.sendto(window[l][0].encode(), self._connect_addr)
+            time.sleep(0.05)
+            print('send_seq_num:' + str(window[l][0].seq_num))
+
+        while 1:
+            if self.ack_list:
+                ack_list_num = [0 for n in range(len(self.ack_list))]
+                send_seq_num = self.ack_list[0].ack_num
+                # s_time = window
+                if self.ack_list:
+                    max_ack = max(max_ack, send_seq_num)
+                    if max_ack == send_seq_num:
+                        max_ack += 1
+                    self.ack_list.pop(0)
+                    # window.append(self.send_base+self.window_size)
+                    # self.send_base += 1
+                else:
+                    print("max_ack: " + str(max_ack))
+                    # 超时
+                    # if time.time() < window[0][1]+ 1:
+                    if time.time() > window[max_ack][1] + 0.2:
+                        self.sendto(window[max_ack][1])
+                        print('send_seq_num:' + str(window[max_ack][0].seq_num))
+                        break
+                    #     # 2是超时时间，重发
+                    # elif ack_list_num[send_seq_num] == 2:
+                    #     # 3 ack，重发
+                    #     print()
+            else:
+                if time.time() > window[max_ack][1] + 0.2:
+                    print("max_ack: " + str(max_ack))
+                    self.sendto(window[max_ack][0].encode(), self._connect_addr)
+                    print('send_seq_num:' + str(window[max_ack][0].seq_num))
+            if max_ack == max_len:
+                break
 
     def close(self):
         """
