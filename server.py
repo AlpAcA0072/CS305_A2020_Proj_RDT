@@ -12,3 +12,4 @@ if __name__ == '__main__':
     socket.accept()
     while True:
         socket.recv(2048)
+        # socket.recv(1446)

@@ -110,6 +110,7 @@ class RDTSocket(UnreliableSocket):
                 recv = RDTSegment.parse(recv)
                 if recv.ack and addr == addr2 and recv.ack_num + len(recv.payload) == 0:
                     conn._connect_addr = addr
+                    self._connect_addr = addr
                     break
             break
 
@@ -147,7 +148,7 @@ class RDTSocket(UnreliableSocket):
             self.ack_num = 0
             rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=b'')
             self.sendto(rdt_seg.encode(), addr)
-        self._connect_addr = addr
+        # self._connect_addr = addr
         while True:
             # timer=threading.Timer(2.0,self.sendsyn,args=[address])
             #             # timer.start()
@@ -185,15 +186,15 @@ class RDTSocket(UnreliableSocket):
         In other words, if someone else sends data to you from another address,
         it MUST NOT affect the data returned by this function.
         """
-
-        data = b''
-        recv, addr = self.recvfrom(2048)
+        # conn, addr = RDTSocket(self._rate), None
+        # data = b''
+        recv, addr = self.recvfrom(bufsize)
         recv = RDTSegment.parse(recv)
         print('recv_seq_num' + str(recv.seq_num))
         print('self.recv_seq_num' + str(self.ack_num))
         if recv.fin:
             self.close()
-            return None
+            return b''
         if recv.seq_num == self.ack_num:
             data = recv.payload
             send_seg = RDTSegment(seq_num=self.ack_num, ack_num=self.ack_num, ack=True, payload=b'', )
@@ -208,16 +209,16 @@ class RDTSocket(UnreliableSocket):
             data = recv.payload
             send_seg = RDTSegment(seq_num=self.ack_num, ack_num=self.ack_num, ack=True, payload=b'', )
             self.sendto(send_seg.encode(), self._connect_addr)
-        # with open('output.txt', 'a') as f:
-        #     f.write(data.decode())
-        # print("recv_seq_num: "+str(recv.seq_num))
-        # if self.ack_num == 103:
-        #     with open('output.txt', 'a') as f:
-        #         content = f.read()
-        #         length = len(content.encode())
-        #         if length < 103 * RDTSegment.MAX_PAYLOAD_LEN:
-        #             for i in range(103):
-        #                 f.write(self.ack_content[str(i)].decode())
+        with open('output.txt', 'a') as f:
+            f.write(data.decode())
+        print("recv_seq_num: "+str(recv.seq_num))
+        if self.ack_num == 103:
+            with open('output.txt', 'a') as f:
+                content = f.read()
+                length = len(content.encode())
+                if length < 103 * RDTSegment.MAX_PAYLOAD_LEN:
+                    for i in range(103):
+                        f.write(self.ack_content[str(i)].decode())
 
         return data
 
@@ -281,7 +282,8 @@ class RDTSocket(UnreliableSocket):
         print(max_len)
         print(len(window))
         for l in range(max_len):
-            self.sendto(window[l][0].encode(), self._connect_addr)
+            pac = window[l][0].encode()
+            self.sendto(pac, self._connect_addr)
             time.sleep(0.05)
             print('send_seq_num:' + str(window[l][0].seq_num))
 
@@ -307,10 +309,13 @@ class RDTSocket(UnreliableSocket):
                     #     # 3 ack，重发
                     #     print()
             else:
-                if time.time() > window[max_ack][1] + 2:
+                if max_ack < len(window) and time.time() > window[max_ack][1] + 2:
                     print("max_ack2: " + str(max_ack))
                     self.sendto(window[max_ack][0].encode(), self._connect_addr)
                     print('send_seq_num:' + str(window[max_ack][0].seq_num))
+                elif max_ack >= len(window):
+                    print("max_ack>=len(window)")
+                    break
             if max_ack == max_len - 1:
                 return
 
