@@ -110,6 +110,7 @@ class RDTSocket(UnreliableSocket):
                 recv = RDTSegment.parse(recv)
                 if recv.ack and addr == addr2 and recv.ack_num + len(recv.payload) == 0:
                     conn._connect_addr = addr
+                    # self._connect_addr = addr
                     break
             break
 
@@ -196,18 +197,19 @@ class RDTSocket(UnreliableSocket):
             return None
         if recv.seq_num == self.ack_num:
             data = recv.payload
-            send_seg = RDTSegment(seq_num=self.ack_num, ack_num=self.ack_num, ack=True, payload=b'', )
+            send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
             self.ack_num += 1
+            self.send_seq_num += 1
             self.sendto(send_seg.encode(), self._connect_addr)
             self.ack_content[str(recv.seq_num)] = recv.payload
             return data
         elif recv.seq_num > self.ack_num:
             data = recv.payload
-            send_seg = RDTSegment(seq_num=self.ack_num, ack_num=self.ack_num, ack=True, payload=b'', )
+            send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
             self.sendto(send_seg.encode(), self._connect_addr)
         else:
             data = recv.payload
-            send_seg = RDTSegment(seq_num=self.ack_num, ack_num=self.ack_num, ack=True, payload=b'', )
+            send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
             self.sendto(send_seg.encode(), self._connect_addr)
         # with open('output.txt', 'a') as f:
         #     f.write(data.decode())
@@ -224,7 +226,7 @@ class RDTSocket(UnreliableSocket):
 
     def receing(self):
         while 1:
-            recv, addr = super().recvfrom(2048)
+            recv, addr = self.recvfrom(2048)
             recv = RDTSegment.parse(recv)
             self.ack_list.append(recv)
 
@@ -308,10 +310,13 @@ class RDTSocket(UnreliableSocket):
                     #     # 3 ack，重发
                     #     print()
             else:
-                if time.time() > window[max_ack][1] + 2:
+                if len(window) > max_ack and time.time() > window[max_ack][1] + 2:
                     print("max_ack2: " + str(max_ack))
                     self.sendto(window[max_ack][0].encode(), self._connect_addr)
                     print('send_seq_num:' + str(window[max_ack][0].seq_num))
+                    window.pop(max_ack)
+                elif len(window) <= max_ack:
+                    break
             if max_ack == max_len - 1:
                 return
 

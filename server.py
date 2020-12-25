@@ -26,6 +26,7 @@ if __name__ == '__main__':
         while True:
             data = conn.recv(2048)
             if data:
+                print(data.decode())
                 conn.send(data)
             else:
                 break
