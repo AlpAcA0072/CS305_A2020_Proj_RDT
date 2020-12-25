@@ -1,68 +1,55 @@
-# server_address2 = ('127.0.0.1', 8081)
-# from USocket import UnreliableSocket
-# from rdt import RDTSocket
-# import socket
-#
-# # s=socket.socket()
-# # s.connect()
-# if __name__ == '__main__':
-#     socket2 = RDTSocket()
-#     socket2.bind(('127.0.0.1', 8080))
-#     socket2.connect(server_address2)
-#     with open('alice.txt', 'r') as f:
-#         data = f.read()
-#     data = data.encode()
-#     socket2.send(data)
-#     # l = len(data)
-#     # print(l)
-#     # k = l / 1000
-#     # print(k)
-#     # for i in range(int(k + 1)):
-#     #     print(i)
-#     #     if i != k:
-#     #         socket2.send(data[i * 1000:(i + 1) * 1000])
-#     #         print(data[i * 1000:(i + 1) * 1000].decode())
-#     #     else:
-#     #         socket2.send(data[i * 1000:])
-#     #         print(data[i * 1000:].decode())
 from rdt import RDTSocket
+from socket import socket, AF_INET, SOCK_STREAM
 import time
 from difflib import Differ
 
-client = RDTSocket()
-client.connect(('127.0.0.1', 9999))
+if __name__ == '__main__':
+    # client = RDTSocket()
+    client = socket(AF_INET, SOCK_STREAM)  # check what python socket does
+    client.connect(('127.0.0.1', 9999))
 
-data_count = 0
-echo = b''
-count = 3
+    echo = b''
+    count = 5
+    slice_size = 2048
+    blocking_send = True
 
-with open('alice.txt', 'r') as f:
-    data = f.read()
-    encoded = data.encode()
-    assert len(data) == len(encoded)
+    with open('alice.txt', 'r') as f:
+        data = f.read()
+        encoded = data.encode()
+        assert len(data) == len(encoded)
 
-start = time.perf_counter()
-for i in range(count):  # send 'alice.txt' for count times
-    data_count += len(data)
-    client.send(encoded)
+    '''
+    check if your rdt pass either of the two
+    mode A may be significantly slower when slice size is small
+    '''
+    if blocking_send:
+        print('transmit in mode A, send & recv in slices')
+        slices = [encoded[i * slice_size:i * slice_size + slice_size] for i in range(len(encoded) // slice_size + 1)]
+        assert sum([len(slice) for slice in slices]) == len(encoded)
 
-'''
-blocking send works but takes more time 
-'''
+        start = time.perf_counter()
+        for i in range(count):  # send 'alice.txt' for count times
+            for slice in slices:
+                client.send(slice)
+                reply = client.recv(slice_size)
+                echo += reply
+    else:
+        print('transmit in mode B')
+        start = time.perf_counter()
+        for i in range(count):
+            client.send(encoded)
+            while len(echo) < len(encoded) * (i + 1):
+                reply = client.recv(slice_size)
+                echo += reply
 
-while True:
-    reply = client.recv(2048)
-    echo += reply
-    print(reply)
-    if len(echo) == len(encoded) * count:
-        break
-client.close()
+    client.close()
 
-'''
-make sure the following is reachable
-'''
+    '''
+    make sure the following is reachable
+    '''
 
-print(f'transmitted {data_count}bytes in {time.perf_counter() - start}s')
-diff = Differ().compare(data.splitlines(keepends=True), echo.decode().splitlines(keepends=True))
-for line in diff:
-    assert line.startswith('  ')  # check if data is correctly echoed
+    print(f'transmitted {len(encoded) * count}bytes in {time.perf_counter() - start}s')
+    diff = Differ().compare((data * count).splitlines(keepends=True), echo.decode().splitlines(keepends=True))
+    for line in diff:
+        if not line.startswith('  '):  # check if data is correctly echoed
+            print(line)

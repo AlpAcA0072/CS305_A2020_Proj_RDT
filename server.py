@@ -1,24 +1,12 @@
-# server_address = ('127.0.0.1', 12345)
-# server_address2 = ('127.0.0.1', 8081)
-# from USocket import UnreliableSocket
-# from rdt import RDTSocket
-# import socket
-#
-# # s=socket.socket()
-# # s.connect()
-# if __name__ == '__main__':
-#     socket = RDTSocket()
-#     socket.bind(server_address2)
-#     socket.accept()
-#     while True:
-#         socket.recv(2048)
-#         # socket.recv(1446)
 from rdt import RDTSocket
+from socket import socket, AF_INET, SOCK_DGRAM, SOCK_STREAM
 import time
 
 if __name__ == '__main__':
-    server = RDTSocket()
+    # server = RDTSocket()
+    server = socket(AF_INET, SOCK_STREAM)  # check what python socket does
     server.bind(('127.0.0.1', 9999))
+    server.listen(0)  # check what python socket does
 
     while True:
         conn, client_addr = server.accept()
@@ -26,7 +14,6 @@ if __name__ == '__main__':
         while True:
             data = conn.recv(2048)
             if data:
-                print(data.decode())
                 conn.send(data)
             else:
                 break
