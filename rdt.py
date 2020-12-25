@@ -68,6 +68,8 @@ class RDTSocket(UnreliableSocket):
 
         self.ack_num = 0
 
+        self.fin = False
+
         self.recv_base = 0
         self.send_base = 0
 
@@ -78,7 +80,7 @@ class RDTSocket(UnreliableSocket):
 
         self.address = None
         self._connect_addr = None
-
+        self.data = b''
         self.syn = False
         self.ack_list = []
         self.content_list = []
@@ -192,15 +194,16 @@ class RDTSocket(UnreliableSocket):
                 print('self.ack_num' + str(self.ack_num))
                 if recv.fin:
                     self.close()
-                    return None
+                    print(self.data)
+                    return self.data
                 if recv.seq_num == self.ack_num:
-                    data = recv.payload
+                    self.data += recv.payload
+
                     send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
                     self.ack_num += 1
                     self.send_seq_num += 1
                     self.sendto(send_seg.encode(), self._connect_addr)
                     self.ack_content[str(recv.seq_num)] = recv.payload
-                    return data
                 elif recv.seq_num > self.ack_num:
                     data = recv.payload
                     send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
@@ -214,12 +217,13 @@ class RDTSocket(UnreliableSocket):
         while 1:
             recv, addr = self.recvfrom(2048)
             recv = RDTSegment.parse(recv)
-            if len(recv.payload) == 0:
+            if len(recv.payload) == 0 and not recv.fin:
                 self.ack_list.append(recv)
             else:
                 self.content_list.append(recv)
 
     def send(self, bytes: bytes):
+        # self.recv(2048)
         number_of_segments = math.ceil(len(bytes) / RDTSegment.SEGMENT_LEN)
         window = []
         for i in range(number_of_segments + 1):
@@ -239,7 +243,7 @@ class RDTSocket(UnreliableSocket):
         print(max_len)
         print(len(window))
 
-        while base != max_len - 1:
+        while base != max_len:
             send_seg = RDTSegment(payload=window[base], ack=True, ack_num=self.ack_num, seq_num=base)
             self.sendto(send_seg.encode(), self._connect_addr)
             print('send_seq: ' + str(base))
@@ -247,14 +251,19 @@ class RDTSocket(UnreliableSocket):
             while temp == base:
                 if self.ack_list:
                     receive_seq = self.ack_list[0].ack_num
+                    print('recv_ack: ' + str(receive_seq))
                     self.ack_list.pop(0)
                     if receive_seq < base:
-                        send_seg = RDTSegment(payload=window[base], ack=True, ack_num=self.ack_num, seq_num=base)
+                        send_seg = RDTSegment(payload=window[base - 1], ack=True, ack_num=self.ack_num, seq_num=base)
                         self.sendto(send_seg.encode(), self._connect_addr)
-
+                        print('resend_seq: ' + str(base - 1))
                     else:
                         base += 1
-                # time.sleep(0.5)
+                else:
+                    send_seg = RDTSegment(payload=window[base], ack=True, ack_num=self.ack_num, seq_num=base)
+                    self.sendto(send_seg.encode(), self._connect_addr)
+                    print('resend_seq: ' + str(base))
+                time.sleep(0.01)
 
     def close(self):
         """
@@ -270,7 +279,8 @@ class RDTSocket(UnreliableSocket):
         #############################################################################
         fin_seg = RDTSegment(fin=True, seq_num=0, ack_num=0, payload=b'')
         self.sendto(fin_seg.encode(), self._connect_addr)
-        super().close()
+        print('Closing------------------------------------------')
+        # super().close()
 
     def set_send_to(self, send_to):
         self._send_to = send_to
