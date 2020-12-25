@@ -65,6 +65,7 @@ class RDTSocket(UnreliableSocket):
         super().__init__(rate=rate)
         self.window_size = 5
         self.debug = debug
+
         self.ack_num = 0
 
         self.recv_base = 0
@@ -80,6 +81,7 @@ class RDTSocket(UnreliableSocket):
 
         self.syn = False
         self.ack_list = []
+        self.content_list = []
         self.ack_content = {}
 
     def accept(self) -> ('RDTSocket', (str, int)):
@@ -110,7 +112,7 @@ class RDTSocket(UnreliableSocket):
                 recv = RDTSegment.parse(recv)
                 if recv.ack and addr == addr2 and recv.ack_num + len(recv.payload) == 0:
                     conn._connect_addr = addr
-                    # self._connect_addr = addr
+                    # self._connect_addr=addr
                     break
             break
 
@@ -177,148 +179,82 @@ class RDTSocket(UnreliableSocket):
     #     timer = threading.Timer(2.0, self.sendsyn, (address))
     #     timer.start()
     def recv(self, bufsize: int) -> bytes:
-        """
-        Receive data from the socket.
-        The return value is a bytes object representing the data received.
-        The maximum amount of data to be received at once is specified by bufsize.
-
-        Note that ONLY data send by the peer should be accepted.
-        In other words, if someone else sends data to you from another address,
-        it MUST NOT affect the data returned by this function.
-        """
 
         data = b''
-        recv, addr = self.recvfrom(2048)
-        recv = RDTSegment.parse(recv)
-        print('recv_seq_num' + str(recv.seq_num))
-        print('self.recv_seq_num' + str(self.ack_num))
-        if recv.fin:
-            self.close()
-            return None
-        if recv.seq_num == self.ack_num:
-            data = recv.payload
-            send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
-            self.ack_num += 1
-            self.send_seq_num += 1
-            self.sendto(send_seg.encode(), self._connect_addr)
-            self.ack_content[str(recv.seq_num)] = recv.payload
-            return data
-        elif recv.seq_num > self.ack_num:
-            data = recv.payload
-            send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
-            self.sendto(send_seg.encode(), self._connect_addr)
-        else:
-            data = recv.payload
-            send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
-            self.sendto(send_seg.encode(), self._connect_addr)
-        # with open('output.txt', 'a') as f:
-        #     f.write(data.decode())
-        # print("recv_seq_num: "+str(recv.seq_num))
-        # if self.ack_num == 103:
-        #     with open('output.txt', 'a') as f:
-        #         content = f.read()
-        #         length = len(content.encode())
-        #         if length < 103 * RDTSegment.MAX_PAYLOAD_LEN:
-        #             for i in range(103):
-        #                 f.write(self.ack_content[str(i)].decode())
+        # recv, addr = self.recvfrom(2048)
+        threading.Thread(target=self.receing).start()
+        while True:
+            while self.content_list:
+                recv = self.content_list[0]
+                self.content_list.pop(0)
 
-        return b''
+                print('recv_seq_num' + str(recv.seq_num))
+                print('self.ack_num' + str(self.ack_num))
+                if recv.fin:
+                    self.close()
+                    return None
+                if recv.seq_num == self.ack_num:
+                    data = recv.payload
+                    send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
+                    self.ack_num += 1
+                    self.send_seq_num += 1
+                    self.sendto(send_seg.encode(), self._connect_addr)
+                    self.ack_content[str(recv.seq_num)] = recv.payload
+                    return data
+                elif recv.seq_num > self.ack_num:
+                    data = recv.payload
+                    send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
+                    self.sendto(send_seg.encode(), self._connect_addr)
+                else:
+                    data = recv.payload
+                    send_seg = RDTSegment(seq_num=self.send_seq_num, ack_num=self.ack_num, ack=True, payload=b'', )
+                    self.sendto(send_seg.encode(), self._connect_addr)
 
     def receing(self):
         while 1:
             recv, addr = self.recvfrom(2048)
             recv = RDTSegment.parse(recv)
-            self.ack_list.append(recv)
+            if len(recv.payload) == 0:
+                self.ack_list.append(recv)
+            else:
+                self.content_list.append(recv)
 
     def send(self, bytes: bytes):
-        """
-        Send data to the socket.
-        The socket must be connected to a remote socket, i.e. self._send_to must not be none.
-        """
-
-        # number_of_segments = math.ceil(len(bytes) / 1000)
-        # for i in range(number_of_segments):
-        #     index = i * RDTSegment.MAX_PAYLOAD_LEN
-        #     payload = bytes[index:index + RDTSegment.MAX_PAYLOAD_LEN]
-        #     rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=payload)
-        #     self.send_seq_num += len(rdt_seg.payload)
-        #     self.sendto(rdt_seg.encode(), self._connect_addr)
-        #     print(payload.decode())
-        # print(number_of_segments)
-        # last_payload = bytes[number_of_segments * RDTSegment.SEGMENT_LEN + 1:len(bytes)]
-        # rdt_seg = RDTSegment(ack=True, seq_num=0, syn=False, ack_num=0, payload=last_payload)
-        # self.sendto(rdt_seg.encode(), self._connect_addr)
-        # print(last_payload.decode())
-
         number_of_segments = math.ceil(len(bytes) / RDTSegment.SEGMENT_LEN)
         window = []
         for i in range(number_of_segments + 1):
             if i != number_of_segments:
                 index = i * RDTSegment.MAX_PAYLOAD_LEN
                 payload = bytes[index:index + RDTSegment.MAX_PAYLOAD_LEN]
-                rdt_seg = RDTSegment(ack=True, seq_num=i, syn=False, ack_num=self.recv_seq_num,
-                                     payload=payload)
-                # self.send_seq_num += 1
-                # self.sendto(rdt_seg.encode(), self._connect_addr)
-
-                window.append([rdt_seg, time.time(), 0])
-
-                # recv, addr = super().recvfrom(2048)
-                # recv = RDTSegment.parse(recv)
-                # print('recv_seq_num' + str(recv.seq_num))
-                # print('self.recv_seq_num' + str(self.ack_num))
-                # if recv.ack and recv.ack_num == self.send_seq_num and recv.syn and recv.seq_num == self.ack_num:
-                #     self.ack_num += 1
-                #     continue
-
-                # time.sleep(0.1)
+                window.append(payload)
             else:
                 last_payload = bytes[i * RDTSegment.MAX_PAYLOAD_LEN:]
-                rdt_seg = RDTSegment(ack=True, seq_num=self.send_seq_num, syn=False, ack_num=self.recv_seq_num,
-                                     payload=last_payload)
-                window.append([rdt_seg, time.time(), 0])
+                if len(last_payload) != 0:
+                    window.append(last_payload)
 
         max_ack = -1
         max_len = len(window)
+        base = 0
         threading.Thread(target=self.receing).start()
         print(max_len)
         print(len(window))
-        for l in range(max_len):
-            self.sendto(window[l][0].encode(), self._connect_addr)
-            time.sleep(0.05)
-            print('send_seq_num:' + str(window[l][0].seq_num))
 
-        while 1:
-            if self.ack_list:
-                send_seq_num = self.ack_list[0].ack_num
-                # s_time = window
+        while base != max_len - 1:
+            send_seg = RDTSegment(payload=window[base], ack=True, ack_num=self.ack_num, seq_num=base)
+            self.sendto(send_seg.encode(), self._connect_addr)
+            print('send_seq: ' + str(base))
+            temp = base
+            while temp == base:
                 if self.ack_list:
-                    max_ack = max(max_ack, send_seq_num)
+                    receive_seq = self.ack_list[0].ack_num
                     self.ack_list.pop(0)
-                    # window.append(self.send_base+self.window_size)
-                    # self.send_base += 1
-                else:
-                    print("max_ack1: " + str(max_ack))
-                    # 超时
-                    # if time.time() < window[0][1]+ 1:
-                    if time.time() > window[max_ack][1] + 5:
-                        self.sendto(window[max_ack][1])
-                        print('send_seq_num:' + str(window[max_ack][0].seq_num))
-                        break
-                    #     # 2是超时时间，重发
-                    # elif ack_list_num[send_seq_num] == 2:
-                    #     # 3 ack，重发
-                    #     print()
-            else:
-                if len(window) > max_ack and time.time() > window[max_ack][1] + 2:
-                    print("max_ack2: " + str(max_ack))
-                    self.sendto(window[max_ack][0].encode(), self._connect_addr)
-                    print('send_seq_num:' + str(window[max_ack][0].seq_num))
-                    window.pop(max_ack)
-                elif len(window) <= max_ack:
-                    break
-            if max_ack == max_len - 1:
-                return
+                    if receive_seq < base:
+                        send_seg = RDTSegment(payload=window[base], ack=True, ack_num=self.ack_num, seq_num=base)
+                        self.sendto(send_seg.encode(), self._connect_addr)
+
+                    else:
+                        base += 1
+                # time.sleep(0.5)
 
     def close(self):
         """
